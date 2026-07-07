@@ -144,7 +144,8 @@ juce_add_plugin("${PROJECT_NAME}"
 # On Linux, JUCE adds -Wl,--no-undefined by default. 
 # This prevents shared libraries (like VST3) from having unresolved sanitizer symbols.
 # We must remove it if sanitizers are enabled, because the host provides the sanitizer runtime.
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (WITH_ADDRESS_SANITIZER OR WITH_THREAD_SANITIZER))
+# Also remove it for general build stability with JUCE on Linux.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     foreach (target "${PROJECT_NAME}_VST3" "${PROJECT_NAME}_LV2" "${PROJECT_NAME}_Standalone" "${PROJECT_NAME}_SharedCode")
         if (TARGET ${target})
             get_target_property(CURRENT_OPTS ${target} LINK_OPTIONS)
