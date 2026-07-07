@@ -89,6 +89,13 @@ include(JUCEDefaults)
 # On Github Actions, this is done as a part of actions/checkout
 add_subdirectory(JUCE)
 
+# Link system libraries on Linux
+if (UNIX AND NOT APPLE)
+    find_package(X11 REQUIRED)
+    find_package(OpenGL REQUIRED)
+    find_package(Freetype REQUIRED)
+endif()
+
 # Add any other modules you want modules here, before the juce_add_plugin call
 #juce_add_module("${CMAKE_CURRENT_LIST_DIR}/modules/friz/Source/friz")
 
@@ -255,6 +262,15 @@ target_link_libraries(SharedCode INTERFACE hwy)
 
 # Link our SharedCode target
 target_link_libraries("${PROJECT_NAME}" PRIVATE SharedCode)
+
+# Link system libraries on Linux
+if (UNIX AND NOT APPLE)
+    target_link_libraries("${PROJECT_NAME}" PRIVATE 
+        X11::X11
+        OpenGL::GL
+        Freetype::Freetype
+    )
+endif()
 
 # IPP support, comment out to disable
 # include(PamplejuceIPP)
