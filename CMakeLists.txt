@@ -224,9 +224,13 @@ target_link_libraries(SharedCode
         juce_gui_basics
         juce_gui_extra
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+
+# Disable LTO on Linux due to LLVM version compatibility issues
+if (NOT UNIX OR APPLE)
+    target_link_libraries(SharedCode INTERFACE juce::juce_recommended_lto_flags)
+endif()
 
 # add nlopt
 set(BUILD_SHARED_LIBS OFF)
