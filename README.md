@@ -8,7 +8,7 @@
 
 ZL Equalizer is an equalizer plugin.
 
-<img src="https://drive.google.com/uc?export=view&id=1xnUGRs3NvWL-2MZ2i8rg0g0bUnG6MSO2" style="width:750px; max-width: 100%; height: auto" />
+<img src="docs/Modified_UI.png" style="width:750px; max-width: 100%; height: auto" />
 
 ## Build from Source
 
