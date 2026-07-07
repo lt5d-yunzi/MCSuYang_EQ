@@ -3,7 +3,7 @@
 	url = https://github.com/stevengj/nlopt
 [submodule "highway"]
 	path = highway
-	url = https://github.com/google/highway
+	url = https://github.com/ZL-Audio/highway
 [submodule "JUCE"]
 	path = JUCE
 	url = https://github.com/ZL-Audio/JUCE
