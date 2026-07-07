@@ -1,6 +1,6 @@
 [submodule "nlopt"]
 	path = nlopt
-	url = https://github.com/stevengj/nlopt
+	url = https://github.com/ZL-Audio/nlopt
 [submodule "highway"]
 	path = highway
 	url = https://github.com/ZL-Audio/highway
