@@ -42,8 +42,8 @@ Once you have set up the environment, you can clone the ZL Equalizer code, popul
   - On Windows, you may pass `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl`.
 
 ```console
-git clone https://github.com/ZL-Audio/ZLEqualizer
-cd ZLEqualizer
+git clone https://github.com/lt5d-yunzi/MCSuYang_EQ
+cd MCSuYang_EQ
 git submodule update --init --recursive
 cmake -B Builds -G Ninja -DCMAKE_BUILD_TYPE=Release -DZL_JUCE_FORMATS="VST3;LV2" -DZL_HWY_STATIC_TARGET="NEON" .
 cmake --build Builds --config Release
