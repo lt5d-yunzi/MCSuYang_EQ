@@ -49,6 +49,10 @@ cmake --build Builds --config Release
 
 After building, the plugins should have been copied to the corresponding folders. If you want to disable the copy process, you can pass `-DZL_JUCE_COPY_PLUGIN=FALSE`, find the binary folders under `Builds/ZLEqualizer_artefacts/Release` and copy them manually.
 
+## Problem
+
+Modifications introduced broke compilation under Linux.
+
 ## License
 
 This work is modified from the original project [ZL Equalizer](https://github.com/ZL-Audio/ZLEqualizer)
