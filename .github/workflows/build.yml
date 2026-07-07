@@ -39,57 +39,6 @@ jobs:
           name: macos-build
           path: Builds/ZLEqualizer_artefacts/Release
 
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update && sudo apt-get install -y \
-            cmake \
-            ninja-build \
-            clang \
-            libasound2-dev \
-            libx11-dev \
-            libxcomposite-dev \
-            libxcursor-dev \
-            libxext-dev \
-            libxinerama-dev \
-            libxrandr-dev \
-            libxrender-dev \
-            libfreetype-dev \
-            libfontconfig1-dev \
-            libglib2.0-dev \
-            libgl1-mesa-dev \
-            libxkbcommon-dev
-
-      - name: Verify Clang version
-        run: |
-          clang --version
-          cmake --version
-
-      - name: Configure CMake
-        run: |
-          cmake -B Builds -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
-            -DZL_JUCE_FORMATS="VST3;LV2" \
-            -DZL_HWY_STATIC_TARGET="SSE4" \
-            .
-
-      - name: Build
-        run: cmake --build Builds --config Release
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-build
-          path: Builds/ZLEqualizer_artefacts/Release
-
   build-windows:
     runs-on: windows-latest
     steps:
