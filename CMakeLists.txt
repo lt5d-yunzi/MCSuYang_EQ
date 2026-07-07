@@ -172,7 +172,7 @@ endif ()
 
 # This lets us use our code in both the JUCE targets and our Test target
 # Without running into ODR violations
-add_library(SharedCode INTERFACE)
+add_library(SharedCode OBJECT)
 
 # C++20, please
 # Use cxx_std_23 for C++23 (as of CMake v 3.20)
@@ -217,7 +217,7 @@ target_compile_definitions(SharedCode
 # However, with Pamplejuce, you'll link modules to SharedCode with INTERFACE visibility
 # This allows the JUCE plugin targets and the Tests target to link against it
 target_link_libraries(SharedCode
-        INTERFACE
+        PUBLIC
         Assets
         juce_audio_utils
         juce_audio_processors
@@ -229,14 +229,14 @@ target_link_libraries(SharedCode
 
 # Disable LTO on Linux due to LLVM version compatibility issues
 if (NOT UNIX OR APPLE)
-    target_link_libraries(SharedCode INTERFACE juce::juce_recommended_lto_flags)
+    target_link_libraries(SharedCode PUBLIC juce::juce_recommended_lto_flags)
 endif()
 
 # add nlopt
 set(BUILD_SHARED_LIBS OFF)
 set(DISABLE_FP_CONTRACT OFF)
 add_subdirectory(nlopt)
-target_link_libraries(SharedCode INTERFACE nlopt)
+target_link_libraries(SharedCode PUBLIC nlopt)
 
 # add highway
 set(ZL_HWY_STATIC_TARGET "NONE" CACHE STRING "Target architecture for static dispatch")
@@ -258,12 +258,12 @@ else ()
     message(FATAL_ERROR "Unsupported ZL_HWY_STATIC_TARGET chosen: ${ZL_HWY_STATIC_TARGET}")
 endif ()
 message(STATUS "SIMD target is ${ZL_HWY_STATIC_TARGET}")
-target_compile_definitions(SharedCode INTERFACE HWY_COMPILE_ONLY_STATIC)
-target_compile_options(SharedCode INTERFACE ${ZL_HWY_ARCH_FLAGS})
+target_compile_definitions(SharedCode PUBLIC HWY_COMPILE_ONLY_STATIC)
+target_compile_options(SharedCode PUBLIC ${ZL_HWY_ARCH_FLAGS})
 add_compile_definitions(HWY_COMPILE_ONLY_STATIC)
 add_compile_options(${ZL_HWY_ARCH_FLAGS})
 add_subdirectory(highway)
-target_link_libraries(SharedCode INTERFACE hwy)
+target_link_libraries(SharedCode PUBLIC hwy)
 
 # Link our SharedCode target
 target_link_libraries("${PROJECT_NAME}" PRIVATE SharedCode)
