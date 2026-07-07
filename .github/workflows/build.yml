@@ -18,6 +18,10 @@ jobs:
         run: |
           brew install cmake ninja
 
+      - name: Verify Clang version
+        run: |
+          clang --version
+
       - name: Configure CMake
         run: |
           cmake -B Builds -G Ninja \
@@ -44,13 +48,25 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            cmake ninja-build clang \
-            libasound2-dev libx11-dev libxcomposite-dev \
-            libxcursor-dev libxext-dev libxinerama-dev \
-            libxrandr-dev libxrender-dev libfreetype-dev \
+          sudo apt-get update && sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            clang \
+            libasound2-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libfreetype-dev \
             libfontconfig1-dev
+
+      - name: Verify Clang version
+        run: |
+          clang --version
+          cmake --version
 
       - name: Configure CMake
         run: |
@@ -78,14 +94,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install LLVM
+      - name: Setup Clang
         uses: egor-tensin/setup-clang@v1
-        with:
-          version: latest
 
       - name: Install CMake and Ninja
         run: |
-          choco install cmake ninja
+          choco install cmake ninja -y
+
+      - name: Verify tools version
+        run: |
+          clang-cl --version
+          cmake --version
+          ninja --version
 
       - name: Configure CMake
         run: |
