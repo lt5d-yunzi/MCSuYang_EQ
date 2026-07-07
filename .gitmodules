@@ -6,4 +6,4 @@
 	url = https://github.com/google/highway
 [submodule "JUCE"]
 	path = JUCE
-	url = https://github.com/juce-framework/JUCE
+	url = https://github.com/ZL-Audio/JUCE
