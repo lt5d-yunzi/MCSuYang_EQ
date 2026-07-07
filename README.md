@@ -4,9 +4,7 @@
 </p>
 
 # ZL Equalizer
-![pluginval](<https://github.com/ZL-Audio/ZLEqualizer/actions/workflows/cmake_full_test.yml/badge.svg?branch=main>)
 [![License](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://opensource.org/license/agpl-v3)
-[![Downloads](https://img.shields.io/github/downloads/ZL-Audio/ZLEqualizer/total)](https://somsubhra.github.io/github-release-stats/?username=ZL-Audio&repository=ZLEqualizer&page=1&per_page=30)
 
 ZL Equalizer is an equalizer plugin.
 
@@ -52,6 +50,10 @@ cmake --build Builds --config Release
 After building, the plugins should have been copied to the corresponding folders. If you want to disable the copy process, you can pass `-DZL_JUCE_COPY_PLUGIN=FALSE`, find the binary folders under `Builds/ZLEqualizer_artefacts/Release` and copy them manually.
 
 ## License
+
+This work is modified from the original project [ZL Equalizer](https://github.com/ZL-Audio/ZLEqualizer)
+
+Modified By Douyin [SuYang](https://www.kx2222.com)
 
 ZL Equalizer is licensed under AGPLv3, as found in the [LICENSE.md](LICENSE.md) file. However, the [logo of ZL Audio](assets/zlaudio.svg) and the [logo of ZL Equalizer](assets/logo.svg) are not covered by this license.
 
