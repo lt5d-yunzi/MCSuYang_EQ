@@ -1,0 +1,9 @@
+[submodule "nlopt"]
+	path = nlopt
+	url = https://github.com/stevengj/nlopt
+[submodule "highway"]
+	path = highway
+	url = https://github.com/google/highway
+[submodule "JUCE"]
+	path = JUCE
+	url = https://github.com/juce-framework/JUCE
