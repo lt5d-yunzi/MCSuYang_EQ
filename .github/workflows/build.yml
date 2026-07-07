@@ -1,0 +1,107 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja
+
+      - name: Configure CMake
+        run: |
+          cmake -B Builds -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DZL_JUCE_FORMATS="VST3;AU" \
+            -DZL_HWY_STATIC_TARGET="NEON" \
+            .
+
+      - name: Build
+        run: cmake --build Builds --config Release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: Builds/ZLEqualizer_artefacts/Release
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build clang \
+            libasound2-dev libx11-dev libxcomposite-dev \
+            libxcursor-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxrender-dev libfreetype-dev \
+            libfontconfig1-dev
+
+      - name: Configure CMake
+        run: |
+          cmake -B Builds -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DZL_JUCE_FORMATS="VST3;LV2" \
+            -DZL_HWY_STATIC_TARGET="SSE4" \
+            .
+
+      - name: Build
+        run: cmake --build Builds --config Release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: Builds/ZLEqualizer_artefacts/Release
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install LLVM
+        uses: egor-tensin/setup-clang@v1
+        with:
+          version: latest
+
+      - name: Install CMake and Ninja
+        run: |
+          choco install cmake ninja
+
+      - name: Configure CMake
+        run: |
+          cmake -B Builds -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER=clang-cl `
+            -DCMAKE_CXX_COMPILER=clang-cl `
+            -DZL_JUCE_FORMATS="VST3" `
+            -DZL_HWY_STATIC_TARGET="AVX2" `
+            .
+
+      - name: Build
+        run: cmake --build Builds --config Release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: Builds/ZLEqualizer_artefacts/Release
