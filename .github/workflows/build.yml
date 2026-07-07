@@ -61,7 +61,10 @@ jobs:
             libxrandr-dev \
             libxrender-dev \
             libfreetype-dev \
-            libfontconfig1-dev
+            libfontconfig1-dev \
+            libglib2.0-dev \
+            libgl1-mesa-dev \
+            libxkbcommon-dev
 
       - name: Verify Clang version
         run: |
