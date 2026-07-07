@@ -1,0 +1,149 @@
+// Copyright (C) 2026 - zsliu98
+// This file is part of ZLEqualizer
+//
+// ZLEqualizer is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License Version 3 as published by the Free Software Foundation.
+//
+// ZLEqualizer is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License along with ZLEqualizer. If not, see <https://www.gnu.org/licenses/>.
+
+#include "PluginEditor.h"
+
+#include "BinaryData.h"
+
+PluginEditor::PluginEditor(PluginProcessor& p) :
+    AudioProcessorEditor(&p),
+    p_ref_(p),
+    state_(dummy_processor_, nullptr,
+           juce::Identifier("ZLEqualizerState"),
+           zlstate::getStateParameterLayout()),
+    property_(state_),
+    base_(state_),
+    main_panel_(p, base_, static_cast<zlpanel::multilingual::TooltipLanguage>(std::round(
+                    zlpanel::getValue(state_, zlstate::PTooltipLang::kID)))) {
+    // set font
+#if defined(JUCE_WINDOWS)
+    base_.font_ = juce::Typeface::createSystemTypefaceFor(
+        BinaryData::InterSubsetMediumNoHinting_ttf, BinaryData::InterSubsetMediumNoHinting_ttfSize);
+#else
+    base_.font_ = juce::Typeface::createSystemTypefaceFor(
+        BinaryData::InterSubsetMedium_ttf, BinaryData::InterSubsetMedium_ttfSize);
+#endif
+    juce::LookAndFeel::getDefaultLookAndFeel().setDefaultSansSerifTypeface(base_.font_);
+    // add the main panel
+    addAndMakeVisible(main_panel_);
+    main_panel_.getControlPanel().addMouseListener(this, true);
+    main_panel_.getOutputPanel().addMouseListener(this, true);
+
+    // set size & size listener
+    setResizable(false, false);
+
+    last_ui_width_.referTo(state_.getParameterAsValue(zlstate::PWindowW::kID));
+    last_ui_height_.referTo(state_.getParameterAsValue(zlstate::PWindowH::kID));
+    last_ui_width_ = 1200;
+    last_ui_height_ = 720;
+    setSize(1200, 720);
+
+    startTimerHz(1);
+    updateIsShowing();
+
+    base_.setPanelProperty(zlgui::kUISettingChanged, true);
+    base_.getPanelValueTree().addListener(this);
+
+    sendLookAndFeelChange();
+}
+
+PluginEditor::~PluginEditor() {
+    base_.getPanelValueTree().removeListener(this);
+    vblank_.reset();
+    stopTimer();
+    p_ref_.getController().setEditorON(false);
+}
+
+void PluginEditor::paint(juce::Graphics& g) {
+    juce::ignoreUnused(g);
+}
+
+void PluginEditor::resized() {
+    main_panel_.setBounds(getLocalBounds());
+    if (!base_.getWindowSizeFix()) {
+        last_ui_width_ = std::clamp(getWidth(),
+                                    static_cast<int>(zlstate::PWindowW::kMinV),
+                                    static_cast<int>(zlstate::PWindowW::kMaxV));
+        last_ui_height_ = std::clamp(getHeight(),
+                                     static_cast<int>(zlstate::PWindowH::kMinV),
+                                     static_cast<int>(zlstate::PWindowH::kMaxV));
+        triggerAsyncUpdate();
+    }
+}
+
+void PluginEditor::visibilityChanged() {
+    updateIsShowing();
+}
+
+void PluginEditor::parentHierarchyChanged() {
+    updateIsShowing();
+}
+
+void PluginEditor::minimisationStateChanged(bool) {
+    updateIsShowing();
+}
+
+void PluginEditor::valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier& property) {
+    if (base_.isPanelIdentifier(zlgui::kUISettingChanged, property)) {
+        triggerAsyncUpdate();
+    }
+}
+
+void PluginEditor::handleAsyncUpdate() {
+    sendLookAndFeelChange();
+    property_.saveAPVTS(state_);
+}
+
+void PluginEditor::timerCallback() {
+    updateIsShowing();
+}
+
+void PluginEditor::updateIsShowing() {
+    const auto is_showing = isShowing();
+    if (is_showing != base_.getIsEditorShowing()) {
+        base_.setIsEditorShowing(is_showing);
+        p_ref_.getController().setEditorON(is_showing);
+        if (is_showing) {
+            main_panel_.startThreads();
+            vblank_ = std::make_unique<juce::VBlankAttachment>(
+                &main_panel_, [this](const double x) { main_panel_.repaintCallBack(x); });
+        } else {
+            vblank_.reset();
+            main_panel_.stopThreads();
+        }
+    }
+}
+
+int PluginEditor::getControlParameterIndex(Component& c) {
+    const auto id = c.getComponentID();
+    if (id.isEmpty()) {
+        return -1;
+    }
+    if (const auto para = p_ref_.parameters_.getParameter(id); para == nullptr) {
+        return -1;
+    } else {
+        return para->getParameterIndex();
+    }
+}
+
+void PluginEditor::mouseDown(const juce::MouseEvent& event) {
+    if (event.mods.isRightButtonDown() && event.getNumberOfClicks() == 1) {
+        if (event.originalComponent != nullptr) {
+            if (const auto id = event.originalComponent->getComponentID(); !id.isEmpty()) {
+                if (const auto para = p_ref_.parameters_.getParameter(id); para != nullptr) {
+                    if (const auto* context = getHostContext(); context != nullptr) {
+                        if (auto menu = context->getContextMenuForParameter(para)) {
+                            menu->showNativeMenu(juce::Component::getMouseXYRelative());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

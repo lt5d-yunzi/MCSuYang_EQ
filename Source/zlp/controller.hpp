@@ -1,0 +1,502 @@
+// Copyright (C) 2026 - zsliu98
+// This file is part of ZLEqualizer
+//
+// ZLEqualizer is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License Version 3 as published by the Free Software Foundation.
+//
+// ZLEqualizer is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License along with ZLEqualizer. If not, see <https://www.gnu.org/licenses/>.
+
+#pragma once
+
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_dsp/juce_dsp.h>
+
+#include "zlp_definitions.hpp"
+
+#include "../dsp/filter/empty_filter/empty.hpp"
+#include "../dsp/filter/dynamic_filter/dynamic_tdf.hpp"
+#include "../dsp/filter/gain_compensation/gain_compensation.hpp"
+#include "../dsp/analyzer/analyzer_base/analyzer_sender_base.hpp"
+// #include "../dsp/eq_match/eq_match_analyzer.hpp"
+#include "../dsp/splitter/inplace_ms_splitter.hpp"
+#include "../dsp/histogram/histogram.hpp"
+
+#include "../dsp/loudness/lufs_matcher.hpp"
+#include "../dsp/gain/gain.hpp"
+
+#include "../dsp/delay/integer_delay.hpp"
+#include "../dsp/analyzer/pitch_detector.hpp"
+
+#include "../chore/thread/notifier.hpp"
+
+namespace zlp {
+    template <typename T, std::size_t N, typename... Args, std::size_t... I>
+    constexpr std::array<T, N> make_array_of_impl(std::index_sequence<I...>, Args&&... args) {
+        return {{(static_cast<void>(I), T(std::forward<Args>(args)...))...}};
+    }
+
+    template <typename T, std::size_t N, typename... Args>
+    constexpr std::array<T, N> make_array_of(Args&&... args) {
+        return make_array_of_impl<T, N>(std::make_index_sequence<N>{}, std::forward<Args>(args)...);
+    }
+
+    class Controller final : private juce::AsyncUpdater {
+    public:
+        static constexpr size_t kFilterSize = 16;
+        static constexpr size_t kMaxPreciseSubBands = 64;
+
+        explicit Controller(juce::AudioProcessor& processor);
+
+        void prepare(double sample_rate, size_t max_num_samples);
+
+        template <bool bypass = false>
+        void process(std::array<double*, 2> main_pointers,
+                     std::array<double*, 2> side_pointers,
+                     size_t num_samples);
+
+        void setFilterStructure(const FilterStructure filter_structure) {
+            filter_structure_.store(filter_structure, std::memory_order::relaxed);
+            to_update_.signal();
+        }
+
+        void setFilterStatus(const size_t idx, const FilterStatus filter_status) {
+            filter_status_[idx].store(filter_status, std::memory_order::relaxed);
+            to_update_status_.signal();
+            to_update_.signal();
+        }
+
+        void setLRMS(const size_t idx, const FilterStereo filter_stereo) {
+            lrms_[idx].store(filter_stereo, std::memory_order::relaxed);
+            to_update_lrms_.signal();
+            to_update_.signal();
+        }
+
+        void setDynamicON(const size_t idx, const bool dynamic_on) {
+            dynamic_on_[idx].store(dynamic_on, std::memory_order::relaxed);
+            to_update_dynamic_.signal();
+            to_update_.signal();
+        }
+
+        void setPitchTrack(const size_t idx, const bool pitch_track) {
+            pitch_track_[idx].store(pitch_track, std::memory_order::relaxed);
+            to_update_.signal();
+        }
+
+        void setPreciseON(const size_t idx, const int precise_on) {
+            precise_on_[idx].store(precise_on, std::memory_order::relaxed);
+            to_update_.signal();
+        }
+
+
+        bool isPreciseActive(const size_t idx) const {
+            return dynamic_on_[idx].load(std::memory_order::relaxed) && 
+                   precise_on_[idx].load(std::memory_order::relaxed) > 0;
+        }
+
+        int getPreciseMode(const size_t idx) const {
+            return dynamic_on_[idx].load(std::memory_order::relaxed) ? precise_on_[idx].load(std::memory_order::relaxed) : 0;
+        }
+
+        double getSubFreq(const size_t idx, const size_t sub_idx) const {
+            return sub_freqs_[idx][sub_idx].load(std::memory_order::relaxed);
+        }
+
+        double getSubGain(const size_t idx, const size_t sub_idx) const {
+            return sub_gains_[idx][sub_idx].load(std::memory_order::relaxed);
+        }
+
+        int getActiveSubBandCount(const size_t idx) const {
+            return c_active_sub_band_count_[idx].load(std::memory_order::relaxed);
+        }
+
+        double getSubQ(const size_t idx, const size_t sub_idx) const {
+            return sub_q_values_[idx][sub_idx].load(std::memory_order::relaxed);
+        }
+
+        void setPitchTrackHarmonic(const size_t idx, const int harmonic) {
+            pitch_track_harmonic_[idx].store(harmonic, std::memory_order::relaxed);
+            to_update_.signal();
+        }
+
+        void setDynamicBypass(const size_t idx, const bool dynamic_bypass) {
+            dynamic_bypass_[idx].store(dynamic_bypass, std::memory_order::relaxed);
+            to_update_.signal();
+        }
+
+        void setDynamicRelative(const size_t idx, const bool is_relative) {
+            dynamic_th_relative_[idx].store(is_relative, std::memory_order::relaxed);
+            dynamic_th_update_[idx].signal();
+            to_update_.signal();
+        }
+
+        void setDynamicSwap(const size_t idx, const bool is_swap) {
+            dynamic_swap_[idx].store(is_swap, std::memory_order::relaxed);
+            to_update_.signal();
+        }
+
+        void setDynamicLearn(const size_t idx, const bool is_learn) {
+            dynamic_th_learn_[idx].store(is_learn, std::memory_order::relaxed);
+            dynamic_th_update_[idx].signal();
+            to_update_.signal();
+        }
+
+        void setDynamicThreshold(const size_t idx, const double threshold) {
+            dynamic_threshold_[idx].store(threshold, std::memory_order::relaxed);
+            dynamic_th_update_[idx].signal();
+            to_update_.signal();
+        }
+
+        void setDynamicKnee(const size_t idx, const double knee) {
+            dynamic_knee_[idx].store(knee, std::memory_order::relaxed);
+            dynamic_th_update_[idx].signal();
+            to_update_.signal();
+        }
+
+        void setDynamicAttack(const size_t idx, const double attack) {
+            dynamic_attack_[idx].store(attack, std::memory_order::relaxed);
+            dynamic_ar_update_[idx].signal();
+            to_update_.signal();
+        }
+
+        void setDynamicRelease(const size_t idx, const double release) {
+            dynamic_release_[idx].store(release, std::memory_order::relaxed);
+            dynamic_ar_update_[idx].signal();
+            to_update_.signal();
+        }
+
+        void setDynamicSmooth(const size_t idx, const double smooth) {
+            dynamic_smooth_[idx].store(smooth, std::memory_order::relaxed);
+            dynamic_smooth_update_[idx].signal();
+            dynamic_extra_update_[idx].signal();
+            to_update_.signal();
+        }
+
+        void setDynamicRMSLength(const size_t idx, const double rms_length) {
+            dynamic_rms_length_[idx].store(rms_length, std::memory_order::relaxed);
+            dynamic_rms_length_update_[idx].signal();
+            dynamic_extra_update_[idx].signal();
+            to_update_.signal();
+        }
+
+        void setDynamicRMSMix(const size_t idx, const double rms_mix) {
+            dynamic_rms_mix_[idx].store(rms_mix, std::memory_order::relaxed);
+            dynamic_rms_mix_update_[idx].signal();
+            dynamic_extra_update_[idx].signal();
+            to_update_.signal();
+        }
+
+        std::array<zldsp::filter::Empty, kBandNum>& getEmptyFilters() {
+            return emptys_;
+        }
+
+        std::array<zldsp::filter::Empty, kBandNum>& getSideEmptyFilters() {
+            return side_emptys_;
+        }
+
+        void setEditorON(const bool editor_on) {
+            editor_on_.store(editor_on, std::memory_order::relaxed);
+        }
+
+        auto& getAnalyzerSender() {
+            return analyzer_sender_;
+        }
+
+        double getLearnedThreshold(const size_t idx) const {
+            return learned_thresholds_[idx].load(std::memory_order::relaxed);
+        }
+
+        double getLearnedKnee(const size_t idx) const {
+            return learned_knees_[idx].load(std::memory_order::relaxed);
+        }
+
+        std::array<zlchore::thread::Notifier, kBandNum>& getEmptyUpdateFlags() {
+            return empty_update_flags_;
+        }
+
+        std::array<zlchore::thread::Notifier, kBandNum>& getSideEmptyUpdateFlags() {
+            return side_empty_update_flags_;
+        }
+
+        auto& getUpdateFlag() {
+            return to_update_;
+        }
+
+        double getCurrentGain(const size_t idx) const {
+            return current_gains_[idx].load(std::memory_order::relaxed);
+        }
+
+        double getCurrentFreq(const size_t idx) const {
+            return current_freqs_[idx].load(std::memory_order::relaxed);
+        }
+
+        bool isPitchTrackingActive(const size_t idx) const {
+            return dynamic_on_[idx].load(std::memory_order::relaxed) && 
+                   pitch_track_[idx].load(std::memory_order::relaxed) && 
+                   c_pitch_track_active_[idx].load(std::memory_order::relaxed);
+        }
+
+        double getSideLoudness(const size_t idx) const {
+            return dynamic_side_loudness_display_[idx].load(std::memory_order::relaxed);
+        }
+
+        void setSoloWholeIdx(const size_t idx) {
+            solo_whole_idx_.store(idx, std::memory_order::relaxed);
+            to_update_solo_.signal();
+            to_update_.signal();
+        }
+
+        void setMakeupGain(const double gain) {
+            makeup_gain_linear_.store(zldsp::chore::decibelsToGain(gain), std::memory_order::relaxed);
+            to_update_makeup_.signal();
+            to_update_output_.signal();
+            to_update_.signal();
+        }
+
+        void setSGCON(const bool f) {
+            sgc_on_.store(f, std::memory_order::relaxed);
+            to_update_output_.signal();
+            to_update_.signal();
+        }
+
+        void setLoudnessMatchON(const bool f) {
+            loudness_matcher_on_.store(f, std::memory_order::relaxed);
+            to_update_output_.signal();
+            to_update_.signal();
+        }
+
+        double getLUFSMatcherDiff() const {
+            return loudness_matcher_.getDiff();
+        }
+
+        void setAGCON(const bool f) {
+            agc_on_.store(f, std::memory_order::relaxed);
+            to_update_output_.signal();
+            to_update_.signal();
+        }
+
+        void setPhaseFlipON(const bool f) {
+            phase_flip_on_.store(f, std::memory_order::relaxed);
+            to_update_output_.signal();
+            to_update_.signal();
+        }
+
+        void setDelay(const double delay_second) {
+            delay_second_.store(delay_second, std::memory_order::relaxed);
+            to_update_delay_.signal();
+            to_update_output_.signal();
+            to_update_.signal();
+        }
+
+        double getDisplayedGain() const {
+            return displayed_gain_.load(std::memory_order::relaxed);
+        }
+
+    private:
+        juce::AudioProcessor& p_ref_;
+        zlchore::thread::Notifier to_update_{false};
+        // filter structure
+        std::atomic<FilterStructure> filter_structure_{};
+        FilterStructure c_filter_structure_{zlp::FilterStructure::kMinimum};
+        // filter status
+        std::array<std::atomic<FilterStatus>, kBandNum> filter_status_{};
+        std::array<FilterStatus, kBandNum> c_filter_status_{};
+        std::vector<size_t> not_off_total_{};
+        zlchore::thread::Notifier to_update_status_{false};
+        // filter l/r/m/s
+        std::array<std::atomic<FilterStereo>, kBandNum> lrms_{};
+        std::array<FilterStereo, kBandNum> c_lrms_{};
+        zlchore::thread::Notifier to_update_lrms_{false};
+        bool is_lr_on_{false}, is_ms_on_{false};
+        // not off indices for stereo/l/r/m/s
+        std::array<std::vector<size_t>, 5> not_off_indices_{};
+        // empty filters for holding atomic parameters
+        std::array<zldsp::filter::Empty, kBandNum> emptys_{};
+        std::array<zlchore::thread::Notifier, kBandNum> empty_update_flags_{};
+        std::array<zldsp::filter::Empty, kBandNum> side_emptys_{};
+        std::array<zlchore::thread::Notifier, kBandNum> side_empty_update_flags_{};
+        std::array<zldsp::filter::FilterParameters, kBandNum> filter_paras_{};
+        std::array<zldsp::filter::FilterParameters, kBandNum> side_filter_paras_{};
+        // dynamic handlers
+        std::array<zldsp::filter::DynamicSideHandler<double>, kBandNum> dynamic_side_handlers_
+            = make_array_of<zldsp::filter::DynamicSideHandler<double>, kBandNum>();
+        // dynamic TDF filters
+        std::array<zldsp::filter::DynamicTDF<double, kFilterSize>, kBandNum> tdf_filters_
+            = [&]<size_t... Is>(std::index_sequence<Is...>) {
+                return std::array{
+                    zldsp::filter::DynamicTDF<double, kFilterSize>{std::get<Is>(dynamic_side_handlers_)}...
+                };
+            }(std::make_index_sequence<std::tuple_size_v<decltype(dynamic_side_handlers_)>>());
+        // side-buffer
+        std::array<std::vector<double>, 2> side_buffers{};
+        std::array<double*, 2> side_copy_pointers_{};
+        size_t side_copy_count_{0};
+        // side-chain filters
+        std::array<zldsp::filter::TDF<double, kFilterSize / 2>, kBandNum> side_filters_{};
+
+        // filter dynamic flags
+        std::array<std::atomic<bool>, kBandNum> dynamic_on_{};
+        std::array<std::atomic<bool>, kBandNum> dynamic_bypass_{};
+        std::array<bool, kBandNum> c_dynamic_on_{};
+        zlchore::thread::Notifier to_update_dynamic_{false};
+        // filter dynamic swap flags
+        std::array<std::atomic<bool>, kBandNum> dynamic_swap_{};
+        // dynamic related parameters
+        std::array<zlchore::thread::Notifier, kBandNum> dynamic_th_update_{};
+        std::array<std::atomic<bool>, kBandNum> dynamic_th_relative_{};
+        std::array<bool, kBandNum> c_dynamic_th_relative_{};
+        std::array<std::atomic<bool>, kBandNum> dynamic_th_learn_{};
+        std::array<bool, kBandNum> c_dynamic_th_learn_{};
+        std::array<std::atomic<double>, kBandNum> dynamic_threshold_{};
+        std::array<double, kBandNum> c_dynamic_threshold_{};
+        std::array<std::atomic<double>, kBandNum> dynamic_knee_{};
+        std::array<zlchore::thread::Notifier, kBandNum> dynamic_ar_update_{};
+        std::array<std::atomic<double>, kBandNum> dynamic_attack_{};
+        std::array<std::atomic<double>, kBandNum> dynamic_release_{};
+        std::array<zlchore::thread::Notifier, kBandNum> dynamic_extra_update_{};
+        std::array<zlchore::thread::Notifier, kBandNum> dynamic_smooth_update_{};
+        std::array<std::atomic<double>, kBandNum> dynamic_smooth_{};
+        std::array<zlchore::thread::Notifier, kBandNum> dynamic_rms_length_update_{};
+        std::array<std::atomic<double>, kBandNum> dynamic_rms_length_{};
+        std::array<zlchore::thread::Notifier, kBandNum> dynamic_rms_mix_update_{};
+        std::array<std::atomic<double>, kBandNum> dynamic_rms_mix_{};
+        // histogram for dynamic auto-threshold
+        double hist_unit_decay_{1.0}, slow_hist_unit_decay_{1.0};
+        std::array<double, 3> hist_percentiles_{0.1, 0.5, 0.9};
+        std::array<double, 3> hist_target_temp_{};
+        std::array<double, 3> hist_results_{};
+        std::array<zldsp::histogram::Histogram<double>, kBandNum> histograms_
+            = make_array_of<zldsp::histogram::Histogram<double>, kBandNum>(-80.0, 0.0, static_cast<size_t>(80));
+        std::array<zldsp::histogram::Histogram<double>, kBandNum> slow_histograms_
+            = make_array_of<zldsp::histogram::Histogram<double>, kBandNum>(-80.0, 0.0, static_cast<size_t>(80));
+        std::array<std::atomic<double>, kBandNum> learned_thresholds_{};
+        std::array<std::atomic<double>, kBandNum> learned_knees_{};
+        // array to hold dynamic gains
+        std::array<std::atomic<double>, kBandNum> current_gains_{};
+        std::array<std::atomic<double>, kBandNum> dynamic_side_loudness_display_{};
+
+        std::array<std::vector<double>, 2> pre_main_buffers_{};
+        std::array<double*, 2> pre_main_pointers_{};
+        std::atomic<bool> editor_on_{false};
+        bool c_editor_on_{false};
+        zldsp::analyzer::AnalyzerSenderBase<double, 3> analyzer_sender_{};
+        // solo related
+        zldsp::filter::TDF<double, kFilterSize / 2> solo_filter_;
+        std::array<std::vector<double>, 2> solo_buffers_{};
+        std::array<double*, 2> solo_pointers_{};
+        zlchore::thread::Notifier to_update_solo_{false};
+        std::atomic<size_t> solo_whole_idx_{2 * kBandNum};
+        bool c_solo_on_{false};
+        bool c_solo_side_{false};
+        size_t c_solo_idx_{0};
+        // static gain compensation
+        zlchore::thread::Notifier to_update_output_{false};
+        std::atomic<bool> sgc_on_{false};
+        bool c_sgc_on_{false};
+        std::array<double, kBandNum> sgc_values_{};
+        double c_sgc_gain_linear_{1.};
+        zldsp::gain::Gain<double> sgc_gain_{};
+        // auto gain compensation
+        std::atomic<bool> agc_on_{false};
+        bool c_agc_on_{false};
+        double pre_square_sum_{1.};
+        double c_agc_gain_linear_{1.};
+        // loudness matcher
+        std::atomic<bool> loudness_matcher_on_{false};
+        bool c_loudness_matcher_on_{false};
+        zldsp::loudness::LUFSMatcher<double, true> loudness_matcher_;
+        // makeup gain
+        zlchore::thread::Notifier to_update_makeup_{false};
+        std::atomic<double> makeup_gain_linear_{};
+        double c_makeup_gain_linear_{};
+        zldsp::gain::Gain<double> output_gain_{};
+        std::atomic<double> displayed_gain_{1.};
+        // phase flip
+        std::atomic<bool> phase_flip_on_{false};
+        bool c_phase_flip_on_{false};
+        // lookahead
+        std::atomic<double> delay_second_{0.};
+        zlchore::thread::Notifier to_update_delay_{false};
+        std::atomic<int> delay_latency_{0};
+        bool c_delay_on_{false};
+        zldsp::delay::IntegerDelay<double> delay_{};
+
+        // pitch tracking parameters
+        std::array<std::atomic<bool>, kBandNum> pitch_track_{};
+        std::array<std::atomic<int>, kBandNum> pitch_track_harmonic_{};
+        std::array<bool, kBandNum> c_pitch_track_{};
+        std::array<int, kBandNum> c_pitch_track_harmonic_{};
+        std::array<std::atomic<bool>, kBandNum> c_pitch_track_active_{};
+        std::array<std::atomic<double>, kBandNum> current_freqs_{};
+        zldsp::analyzer::PitchDetector pitch_detector_{};
+        double sample_rate_{48000.0};
+
+        // precise mode parameters
+        std::array<std::atomic<int>, kBandNum> precise_on_{};
+        std::array<int, kBandNum> c_precise_on_{};
+
+        // precise B (up to 64-band) parameters - auto-computed sub-band count
+        std::array<std::atomic<int>, kBandNum> c_active_sub_band_count_{};
+        std::array<std::array<zldsp::filter::TDF<double, 1>, kMaxPreciseSubBands>, kBandNum> sub_side_filters_{};
+        std::array<std::array<zldsp::filter::TDF<double, 1>, kMaxPreciseSubBands>, kBandNum> sub_precise_filters_{};
+        std::array<std::array<double, kMaxPreciseSubBands>, kBandNum> sub_follower_states_{};
+        std::array<std::array<std::atomic<double>, kMaxPreciseSubBands>, kBandNum> sub_freqs_{};
+        std::array<std::array<std::atomic<double>, kMaxPreciseSubBands>, kBandNum> sub_gains_{};
+        std::array<std::array<std::atomic<double>, kMaxPreciseSubBands>, kBandNum> sub_q_values_{};
+
+        void prepareBuffer();
+
+        void prepareStatus();
+
+        void prepareDynamics();
+
+        void prepareOneBandDynamics(size_t i);
+
+        void prepareLRMS();
+
+        void prepareFilters();
+
+
+
+        void prepareOutput();
+
+        void prepareDynamicParameters();
+
+        void handleAsyncUpdate() override;
+
+        template <typename DynamicFilterArrayType, bool should_check_parallel = false, bool should_be_parallel = false>
+        void processDynamic(DynamicFilterArrayType& dynamic_filters,
+                            std::array<double*, 2> main_pointers,
+                            std::array<double*, 2> side_pointers,
+                            size_t num_samples);
+
+        template <typename DynamicFilterArrayType, bool should_check_parallel, bool should_be_parallel>
+        void processOneChannelDynamic(DynamicFilterArrayType& dynamic_filters,
+                                      size_t lrms_idx,
+                                      std::span<double*> main_pointers,
+                                      std::span<double*> side_pointers1,
+                                      std::span<double*> side_pointers2,
+                                      size_t num_samples);
+
+        template <bool bypass = false, bool dynamic_on = false, bool dynamic_bypass = false,
+                  typename DynamicFilterArrayType>
+        void processOneBandDynamic(DynamicFilterArrayType& dynamic_filters,
+                                   size_t i,
+                                   std::span<double*> main_pointers,
+                                   std::span<double*> side_pointers,
+                                   size_t num_samples);
+
+
+
+        template <bool force>
+        void updateSoloFilter(zldsp::filter::FilterParameters paras);
+
+        void updateSGC();
+
+        void updateOutputGain();
+    };
+
+    extern template void Controller::process<true>(std::array<double*, 2>, std::array<double*, 2>, size_t);
+
+    extern template void Controller::process<false>(std::array<double*, 2>, std::array<double*, 2>, size_t);
+}

@@ -1,0 +1,133 @@
+// Copyright (C) 2026 - zsliu98
+// This file is part of ZLEqualizer
+//
+// ZLEqualizer is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License Version 3 as published by the Free Software Foundation.
+//
+// ZLEqualizer is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License along with ZLEqualizer. If not, see <https://www.gnu.org/licenses/>.
+
+#pragma once
+
+#include "dynamic_side_handler.hpp"
+
+namespace zldsp::filter {
+    /**
+     * a dynamic IIR filter which processes audio on the real-time thread
+     * @tparam FloatType the float type of input audio buffer
+     */
+    template <class FilterType, typename FloatType>
+    class DynamicBase {
+    public:
+        explicit DynamicBase(DynamicSideHandler<FloatType>& handler) :
+            handler_(handler) {
+        }
+
+        /**
+         * reset IIR filter state and follower state
+         */
+        void reset() {
+            filter_.reset();
+        }
+
+        /**
+         * reset dynamic status
+         */
+        void resetDynamic() {
+            filter_.setGain(handler_.getBaseGain());
+            filter_.updateCoeffs();
+        }
+
+        /**
+         * prepare the dynamic filter
+         * @param sample_rate
+         * @param num_channels
+         * @param max_num_samples
+         */
+        void prepare(const double sample_rate, const size_t num_channels, const size_t max_num_samples) {
+            filter_.prepare(sample_rate, num_channels, max_num_samples);
+        }
+
+        /**
+         *
+         * @return the underlying IIR filter
+         */
+        FilterType& getFilter() {
+            return filter_;
+        }
+
+    protected:
+        FilterType filter_{};
+        zldsp::filter::DynamicSideHandler<FloatType>& handler_;
+
+        /**
+         * process the incoming audio buffer
+         * @param main_buffer
+         * @param side_buffer
+         * @param num_samples
+         */
+        template <bool bypass = false, bool dynamic_on = false, bool dynamic_bypass = false>
+        void process(std::span<FloatType*> main_buffer, std::span<FloatType*> side_buffer,
+                     const size_t num_samples) {
+            if constexpr (dynamic_on) {
+                if constexpr (dynamic_bypass) {
+                    filter_.template setGain<true>(handler_.getBaseGain());
+                    filter_.updateCoeffs();
+                }
+                // make sure that freq & q are update to date
+                if (filter_.isFreqQSmoothing()) {
+                    filter_.skipSmooth();
+                }
+                // calculate portion using SIMD
+                handler_.process(side_buffer, num_samples);
+                const size_t gain_num = filter_.getOrder() < 3 ? 1 : filter_.getOrder() / 2;
+                switch (handler_.getFollower().getSState()) {
+                case zldsp::compressor::SState::kOff: {
+                    handler_.template processToGainLinear<zldsp::compressor::SState::kOff>(
+                        side_buffer[0], num_samples, gain_num);
+                    break;
+                }
+                case zldsp::compressor::SState::kFull: {
+                    handler_.template processToGainLinear<zldsp::compressor::SState::kFull>(
+                        side_buffer[0], num_samples, gain_num);
+                    break;
+                }
+                case zldsp::compressor::SState::kMix: {
+                    handler_.template processToGainLinear<zldsp::compressor::SState::kMix>(
+                        side_buffer[0], num_samples, gain_num);
+                    break;
+                }
+                default: {
+                    break;
+                }
+                }
+                internalProcess<bypass, dynamic_bypass>(main_buffer, side_buffer, num_samples);
+            } else {
+                filter_.template process<bypass>(main_buffer, num_samples);
+            }
+        }
+
+        template <bool bypass = false, bool dynamic_bypass = false>
+        void internalProcess(std::span<FloatType*> main_buffer, std::span<FloatType*> side_buffer,
+                             const size_t num_samples) {
+            const auto side_p = side_buffer[0];
+            // dynamic processing (with sub-sampled coefficient updates to reduce CPU)
+            constexpr size_t kCoefUpdateInterval = 8;
+            for (size_t i = 0; i < num_samples; i += kCoefUpdateInterval) {
+                const size_t limit = std::min(i + kCoefUpdateInterval, num_samples);
+                if constexpr (!dynamic_bypass) {
+                    filter_.updateGainLinear(side_p[i]);
+                }
+                for (size_t k = i; k < limit; ++k) {
+                    for (size_t chan = 0; chan < main_buffer.size(); ++chan) {
+                        if constexpr (bypass) {
+                            filter_.processSample(chan, main_buffer[chan][k]);
+                        } else {
+                            main_buffer[chan][k] = filter_.processSample(chan, main_buffer[chan][k]);
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
